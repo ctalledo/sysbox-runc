@@ -282,14 +282,9 @@ func (c *linuxContainer) Start(process *Process) error {
 			return err
 		}
 
-		// TODO: check if we need to setup ID-mapped mounts here
+		// TODO: check if we need to set up ID-mapped mounts here
 
 		if c.config.RootfsUidShiftType == sh.Chown {
-
-			// TODO: if the rootfs is on overlay2, ensure option metacopy=on is set; if
-			// not, remount it with this option. This makes the chown much faster,
-			// specially for large images.
-
 			if err := c.chownRootfs(); err != nil {
 				return err
 			}
