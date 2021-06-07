@@ -2640,8 +2640,8 @@ func (c *linuxContainer) teardownShiftfsMarkLocal() error {
 	return nil
 }
 
-// The following are host directories where we never mount shiftfs as it causes functional problems.
-var shiftfsBlackList = []string{"/dev"}
+// The following are host directories where we never mount shiftfs as it causes functional or security problems.
+var shiftfsBlackList = []string{"/dev", "/var/lib/sysbox/sysfs"}
 
 // sysbox-runc: skipShiftfsBindSource indicates if shiftfs mounts should be skipped on the
 // given directory.

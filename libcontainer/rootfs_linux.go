@@ -1073,9 +1073,9 @@ func doMounts(config *configs.Config, pipe io.ReadWriter) error {
 
 	chownList := []string{}
 
-	// Do non-bind mounts
+	// Do non-bind mounts and non-cgroup mounts first
 	for _, m := range config.Mounts {
-		if m.Device != "bind" {
+		if m.Device != "bind" && m.Device != "cgroup" {
 			if err := mountToRootfs(m, config.Rootfs, config.MountLabel, true, pipe); err != nil {
 				return newSystemErrorWithCausef(err, "mounting %q to rootfs %q at %q", m.Source, config.Rootfs, m.Destination)
 			}
@@ -1098,6 +1098,15 @@ func doMounts(config *configs.Config, pipe io.ReadWriter) error {
 
 	if err := doBindMounts(config, pipe); err != nil {
 		return err
+	}
+
+	// Do the cgroup mounts now
+	for _, m := range config.Mounts {
+		if m.Device == "cgroup" {
+			if err := mountToRootfs(m, config.Rootfs, config.MountLabel, true, pipe); err != nil {
+				return newSystemErrorWithCausef(err, "mounting %q to rootfs %q at %q", m.Source, config.Rootfs, m.Destination)
+			}
+		}
 	}
 
 	if err := chownMounts(config, pipe, chownList); err != nil {

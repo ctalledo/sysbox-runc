@@ -49,9 +49,9 @@ const (
 var sysboxMounts = []specs.Mount{
 	specs.Mount{
 		Destination: "/sys",
-		Source:      "sysfs",
-		Type:        "sysfs",
-		Options:     []string{"noexec", "nosuid", "nodev"},
+		Source:      "/var/lib/sysbox/sysfs",
+		Type:        "bind",
+		Options:     []string{"bind", "private"},
 	},
 	specs.Mount{
 		Destination: "/sys/fs/cgroup",
