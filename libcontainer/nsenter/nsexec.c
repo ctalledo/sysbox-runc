@@ -555,12 +555,16 @@ void join_namespaces(char *nslist)
 	int num = 0, i;
 	char *saveptr = NULL;
 	char *namespace = strtok_r(nslist, ",", &saveptr);
+
 	struct namespace_t {
 		int fd;
 		int ns;
 		char type[PATH_MAX];
 		char path[PATH_MAX];
 	} *namespaces = NULL;
+
+	int clone_user = 0;
+	int userns_idx = 0;
 
 	if (!namespace || !strlen(namespace) || !strlen(nslist))
 		bail("ns paths are empty");
@@ -606,9 +610,32 @@ void join_namespaces(char *nslist)
 
 	for (i = 0; i < num; i++) {
 		struct namespace_t ns = namespaces[i];
+		int ret;
 
-		if (setns(ns.fd, ns.ns) < 0)
-			bail("failed to setns to %s", ns.path);
+		if (ns.ns & CLONE_NEWUSER) {
+			clone_user = 1;
+			userns_idx = i;
+			continue;
+		}
+
+		ret = setns(ns.fd, ns.ns);
+		if (ret < 0)
+			bail("failed to setns to %s: %d", ns.path, ret);
+
+		close(ns.fd);
+	}
+
+	// XXX: DEBUG: do the user-ns last
+	// TODO: does this break isolation of procfs for example (since we joined the other ns prior to the userns)
+	// It should not, because those other ns are already owned by the userns.
+	// TODO: research ns ordering in user-ns man page.
+
+	if (clone_user) {
+		struct namespace_t ns = namespaces[userns_idx];
+		int ret;
+		ret = setns(ns.fd, ns.ns);
+		if (ret < 0)
+			bail("failed to setns to userns %s: %d", ns.path, ret);
 
 		close(ns.fd);
 	}
@@ -926,6 +953,9 @@ void nsexec(void)
 
 			/* For debugging. */
 			prctl(PR_SET_NAME, (unsigned long)"runc:[1:CHILD]", 0, 0, 0);
+
+			// XXX: DEBUG
+			sleep(7);
 
 			/*
 			 * We need to setns first. We cannot do this earlier (in stage 0)
