@@ -563,7 +563,7 @@ void join_namespaces(char *nslist)
 		char path[PATH_MAX];
 	} *namespaces = NULL;
 
-	int clone_user = 0;
+	int join_user = 0;
 	int userns_idx = 0;
 
 	if (!namespace || !strlen(namespace) || !strlen(nslist))
@@ -601,19 +601,22 @@ void join_namespaces(char *nslist)
 		ns->path[PATH_MAX - 1] = '\0';
 	} while ((namespace = strtok_r(NULL, ",", &saveptr)) != NULL);
 
-	/*
-	 * The ordering in which we join namespaces is important. We should
-	 * always join the user namespace *first*. This is all guaranteed
-	 * from the container_linux.go side of this, so we're just going to
-	 * follow the order given to us.
-	 */
-
 	for (i = 0; i < num; i++) {
 		struct namespace_t ns = namespaces[i];
 		int ret;
 
+		// sysbox-runc:
+		//
+		// Join the user-ns last, because once we join it we may loose
+		// capabilities to join the others. Per setns(2):
+		//
+		// "In order to reassociate itself with a new network, IPC, or UTS
+		// namespace, the caller must have the CAP_SYS_ADMIN capability both in
+		// its own user namespace and in the user namespace that owns the target
+		// namespace."
+
 		if (ns.ns & CLONE_NEWUSER) {
-			clone_user = 1;
+			join_user = 1;
 			userns_idx = i;
 			continue;
 		}
@@ -625,14 +628,10 @@ void join_namespaces(char *nslist)
 		close(ns.fd);
 	}
 
-	// XXX: DEBUG: do the user-ns last
-	// TODO: does this break isolation of procfs for example (since we joined the other ns prior to the userns)
-	// It should not, because those other ns are already owned by the userns.
-	// TODO: research ns ordering in user-ns man page.
-
-	if (clone_user) {
+	if (join_user) {
 		struct namespace_t ns = namespaces[userns_idx];
 		int ret;
+
 		ret = setns(ns.fd, ns.ns);
 		if (ret < 0)
 			bail("failed to setns to userns %s: %d", ns.path, ret);
@@ -953,9 +952,6 @@ void nsexec(void)
 
 			/* For debugging. */
 			prctl(PR_SET_NAME, (unsigned long)"runc:[1:CHILD]", 0, 0, 0);
-
-			// XXX: DEBUG
-			sleep(7);
 
 			/*
 			 * We need to setns first. We cannot do this earlier (in stage 0)

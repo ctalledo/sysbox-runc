@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	mapset "github.com/deckarep/golang-set"
 	ipcLib "github.com/nestybox/sysbox-ipc/sysboxMgrLib"
@@ -891,6 +892,9 @@ func ConvertProcessSpec(p *specs.Process) error {
 
 // ConvertSpec converts the given container spec to a system container spec.
 func ConvertSpec(context *cli.Context, sysMgr *sysbox.Mgr, sysFs *sysbox.Fs, spec *specs.Spec) (bool, bool, error) {
+
+	// XXX: DEBUG
+	time.Sleep(1 * time.Hour)
 
 	if err := checkSpec(spec); err != nil {
 		return false, false, fmt.Errorf("invalid or unsupported container spec: %v", err)
