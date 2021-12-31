@@ -283,7 +283,17 @@ func (c *linuxContainer) Start(process *Process) error {
 		}
 
 		// TODO: check if we need to setup ID-mapped mounts here
-		// TODO: check if we need to chown rootfs here; or do we do it earlier, in spec.go?
+
+		if c.config.RootfsUidShiftType == sh.Chown {
+
+			// TODO: if the rootfs is on overlay2, ensure option metacopy=on is set; if
+			// not, remount it with this option. This makes the chown much faster,
+			// specially for large images.
+
+			if err := c.chownRootfs(); err != nil {
+				return err
+			}
+		}
 
 		if c.config.RootfsUidShiftType == sh.Shiftfs ||
 			c.config.BindMntUidShiftType == sh.Shiftfs {
@@ -726,26 +736,37 @@ func (c *linuxContainer) newInitConfig(process *Process) *initConfig {
 }
 
 func (c *linuxContainer) Destroy() error {
+	var err error
+
 	c.m.Lock()
 	defer c.m.Unlock()
 
-	err := c.state.destroy()
+	// If the rootfs was chowned, revert it back to its original uid & gid
+	if c.config.RootfsUidShiftType == sh.Chown {
+		if err2 := c.revertRootfsChown(); err == nil {
+			err = err2
+		}
+	}
+
+	if err2 := c.state.destroy(); err == nil {
+		err = err2
+	}
 
 	if c.sysFs.Enabled() {
-		if ferr := c.sysFs.Unregister(); err == nil {
-			err = ferr
+		if err2 := c.sysFs.Unregister(); err == nil {
+			err = err2
 		}
 	}
 
 	if c.sysMgr.Enabled() {
-		if merr := c.sysMgr.Unregister(); err == nil {
-			err = merr
+		if err2 := c.sysMgr.Unregister(); err == nil {
+			err = err2
 		}
 	} else {
 		// If sysbox-mgr is not present (i.e., unit testing), then we teardown
 		// shiftfs marks here.
-		if serr := c.teardownShiftfsMarkLocal(); err == nil {
-			err = serr
+		if err2 := c.teardownShiftfsMarkLocal(); err == nil {
+			err = err2
 		}
 	}
 
@@ -2635,6 +2656,32 @@ func (c *linuxContainer) teardownShiftfsMarkLocal() error {
 				return newSystemErrorWithCausef(err, "unmarking shiftfs on %s", m.Source)
 			}
 		}
+	}
+
+	return nil
+}
+
+// chowns the container's rootfs to match the user-ns uid & gid mappings.
+func (c *linuxContainer) chownRootfs() error {
+
+	uidOffset := int32(c.config.UidMappings[0].HostID)
+	gidOffset := int32(c.config.GidMappings[0].HostID)
+
+	if err := sh.ShiftIdsWithChown(c.config.Rootfs, uidOffset, gidOffset); err != nil {
+		return newSystemErrorWithCausef(err, "chowning rootfs at %s by offset %d, %d", c.config.Rootfs, uidOffset, gidOffset)
+	}
+
+	return nil
+}
+
+// reverts the container's rootfs chown (back to it's original value)
+func (c *linuxContainer) revertRootfsChown() error {
+
+	uidOffset := 0 - int32(c.config.UidMappings[0].HostID)
+	gidOffset := 0 - int32(c.config.GidMappings[0].HostID)
+
+	if err := sh.ShiftIdsWithChown(c.config.Rootfs, uidOffset, gidOffset); err != nil {
+		return newSystemErrorWithCausef(err, "chowning rootfs at %s by offset %d, %d", c.config.Rootfs, uidOffset, gidOffset)
 	}
 
 	return nil

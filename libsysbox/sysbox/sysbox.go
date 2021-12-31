@@ -211,9 +211,10 @@ func kernelSupportsUidShifting() (sh.IDShiftType, bool) {
 	// For shiftfs: Ubuntu only (or run an experiment)
 	// For ID-mapped mounts: none yet (or run an experiment)
 
-	if err := KernelModSupported("shiftfs"); err == nil {
-		return sh.Shiftfs, true
-	}
+	// XXX: DEBUG
+	// if err := KernelModSupported("shiftfs"); err == nil {
+	// 	return sh.Shiftfs, true
+	// }
 
 	return sh.NoShift, false
 }
@@ -241,8 +242,7 @@ func CheckUidShifting(sysMgr *Mgr, spec *specs.Spec) (sh.IDShiftType, sh.IDShift
 		if kernelShiftWorksOnRootfs {
 			rootfsShiftType = kernelShiftType
 		} else {
-			// TODO: change this to chown once we add support for chowning rootfs
-			rootfsShiftType = sh.NoShift
+			rootfsShiftType = sh.Chown
 		}
 	}
 
@@ -289,9 +289,9 @@ func KernelModSupported(mod string) error {
 	exec.Command("modprobe", mod).Run()
 
 	// Check if the module is in the kernel
-	f, err := os.Open("/proc/filesystems")
+	f, err := os.Open("/proc/modules")
 	if err != nil {
-		return fmt.Errorf("failed to open /proc/filesystems to check for %s module", mod)
+		return fmt.Errorf("failed to open /proc/modules to check for %s module", mod)
 	}
 	defer f.Close()
 
