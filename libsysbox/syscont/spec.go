@@ -28,6 +28,7 @@ import (
 
 	mapset "github.com/deckarep/golang-set"
 	ipcLib "github.com/nestybox/sysbox-ipc/sysboxMgrLib"
+	sh "github.com/nestybox/sysbox-libs/idShiftUtils"
 	utils "github.com/nestybox/sysbox-libs/utils"
 	"github.com/opencontainers/runc/libsysbox/sysbox"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -532,7 +533,7 @@ func cfgReadonlyPaths(spec *specs.Spec) {
 }
 
 // cfgMounts configures the system container mounts
-func cfgMounts(spec *specs.Spec, sysMgr *sysbox.Mgr, sysFs *sysbox.Fs, uidShiftRootfs bool) error {
+func cfgMounts(spec *specs.Spec, sysMgr *sysbox.Mgr, sysFs *sysbox.Fs, rootfsUidShiftType sh.IDShiftType) error {
 
 	cfgSysboxMounts(spec)
 
@@ -541,7 +542,7 @@ func cfgMounts(spec *specs.Spec, sysMgr *sysbox.Mgr, sysFs *sysbox.Fs, uidShiftR
 	}
 
 	if sysMgr.Enabled() {
-		if err := sysMgrSetupMounts(sysMgr, spec, uidShiftRootfs); err != nil {
+		if err := sysMgrSetupMounts(sysMgr, spec, rootfsUidShiftType); err != nil {
 			return err
 		}
 	}
@@ -795,7 +796,7 @@ func getSpecialDirs(spec *specs.Spec) (map[string]ipcLib.MntKind, error) {
 }
 
 // sysMgrSetupMounts requests the sysbox-mgr to setup special sys container mounts.
-func sysMgrSetupMounts(mgr *sysbox.Mgr, spec *specs.Spec, uidShiftRootfs bool) error {
+func sysMgrSetupMounts(mgr *sysbox.Mgr, spec *specs.Spec, rootfsUidShiftType sh.IDShiftType) error {
 
 	// Obtain map of Sysbox's special directories.
 	specialDirMap, err := getSpecialDirs(spec)
@@ -884,9 +885,9 @@ func sysMgrSetupMounts(mgr *sysbox.Mgr, spec *specs.Spec, uidShiftRootfs bool) e
 			// special dir during the copy depends on whether the container rootfs
 			// itself requires uid shifting or not (i.e., whether the rootfs is
 			// owned by root:root (shifting required) or by the <uid>:<gid> in the
-			// userns map (shifting not required).
+			// userns map (shifting not required)).
 
-			shiftUids = uidShiftRootfs
+			shiftUids = (rootfsUidShiftType != sh.NoShift)
 
 		} else {
 			return err
@@ -1137,28 +1138,31 @@ func ConvertProcessSpec(p *specs.Process) error {
 }
 
 // ConvertSpec converts the given container spec to a system container spec.
-func ConvertSpec(context *cli.Context, sysMgr *sysbox.Mgr, sysFs *sysbox.Fs, spec *specs.Spec) (bool, bool, error) {
+func ConvertSpec(context *cli.Context,
+	sysMgr *sysbox.Mgr,
+	sysFs *sysbox.Fs,
+	spec *specs.Spec) (sh.IDShiftType, sh.IDShiftType, error) {
 
 	if err := checkSpec(spec); err != nil {
-		return false, false, fmt.Errorf("invalid or unsupported container spec: %v", err)
+		return sh.NoShift, sh.NoShift, fmt.Errorf("invalid or unsupported container spec: %v", err)
 	}
 
 	if err := cfgNamespaces(sysMgr, spec); err != nil {
-		return false, false, fmt.Errorf("invalid namespace config: %v", err)
+		return sh.NoShift, sh.NoShift, fmt.Errorf("invalid namespace config: %v", err)
 	}
 
 	if err := cfgIDMappings(sysMgr, spec); err != nil {
-		return false, false, fmt.Errorf("invalid user/group ID config: %v", err)
+		return sh.NoShift, sh.NoShift, fmt.Errorf("invalid user/group ID config: %v", err)
 	}
 
 	// Must do this after cfgIDMappings()
-	uidShiftSupported, uidShiftRootfs, err := sysbox.CheckUidShifting(spec)
+	rootfsUidShiftType, bindMntUidShiftType, err := sysbox.CheckUidShifting(sysMgr, spec)
 	if err != nil {
-		return false, false, err
+		return sh.NoShift, sh.NoShift, err
 	}
 
-	if err := cfgMounts(spec, sysMgr, sysFs, uidShiftRootfs); err != nil {
-		return false, false, fmt.Errorf("invalid mount config: %v", err)
+	if err := cfgMounts(spec, sysMgr, sysFs, rootfsUidShiftType); err != nil {
+		return sh.NoShift, sh.NoShift, fmt.Errorf("invalid mount config: %v", err)
 	}
 
 	cfgMaskedPaths(spec)
@@ -1166,12 +1170,12 @@ func ConvertSpec(context *cli.Context, sysMgr *sysbox.Mgr, sysFs *sysbox.Fs, spe
 	cfgOomScoreAdj(spec)
 
 	if err := cfgSeccomp(spec.Linux.Seccomp); err != nil {
-		return false, false, fmt.Errorf("failed to configure seccomp: %v", err)
+		return sh.NoShift, sh.NoShift, fmt.Errorf("failed to configure seccomp: %v", err)
 	}
 
 	if err := ConvertProcessSpec(spec.Process); err != nil {
-		return false, false, fmt.Errorf("failed to configure process spec: %v", err)
+		return sh.NoShift, sh.NoShift, fmt.Errorf("failed to configure process spec: %v", err)
 	}
 
-	return uidShiftSupported, uidShiftRootfs, nil
+	return rootfsUidShiftType, bindMntUidShiftType, nil
 }

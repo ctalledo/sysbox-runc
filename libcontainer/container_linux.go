@@ -43,6 +43,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
+
+	sh "github.com/nestybox/sysbox-libs/idShiftUtils"
 )
 
 const stdioFdCount = 3
@@ -279,7 +281,12 @@ func (c *linuxContainer) Start(process *Process) error {
 		if err := c.createExecFifo(); err != nil {
 			return err
 		}
-		if c.config.UidShiftSupported {
+
+		// TODO: check if we need to setup ID-mapped mounts here
+		// TODO: check if we need to chown rootfs here; or do we do it earlier, in spec.go?
+
+		if c.config.RootfsUidShiftType == sh.Shiftfs ||
+			c.config.BindMntUidShiftType == sh.Shiftfs {
 			if err := c.setupShiftfsMarks(); err != nil {
 				return err
 			}
@@ -2490,19 +2497,14 @@ func (c *linuxContainer) setupShiftfsMarks() error {
 	config := c.config
 	shiftfsMounts := []configs.ShiftfsMount{}
 
-	if !config.UidShiftSupported {
-		return nil
-	}
-
-	if config.UidShiftRootfs {
+	if config.RootfsUidShiftType == sh.Shiftfs {
 		shiftfsMounts = append(shiftfsMounts, configs.ShiftfsMount{Source: config.Rootfs, Readonly: false})
 	}
 
 	// Determine if other host directories mounted into the container's rootfs
-	// need uid shifting. Sysbox config option BindMountUidShift disables this
-	// behavior.
+	// need uid shifting.
 
-	if c.sysMgr.Config.BindMountUidShift {
+	if config.BindMntUidShiftType == sh.Shiftfs {
 		for _, m := range config.Mounts {
 			if m.Device == "bind" {
 
@@ -2572,7 +2574,7 @@ func (c *linuxContainer) setupShiftfsMarks() error {
 		// Replace the container's mounts that have shiftfs with the shiftfs
 		// markpoint allocated by sysbox-mgr.
 
-		if config.UidShiftRootfs {
+		if config.RootfsUidShiftType == sh.Shiftfs {
 			config.Rootfs = shiftfsMarks[0].Source
 		}
 
