@@ -197,6 +197,9 @@ func needUidShiftOnRootfs(spec *specs.Spec) (bool, error) {
 	return false, nil
 }
 
+// Checks if the kernel supports UID shifting and whether the shifting works on
+// the container's rootfs (e.g., whether the shifting works on top of
+// overlayfs).
 func kernelSupportsUidShifting() (sh.IDShiftType, bool) {
 
 	// TODO: check if the kernel supports ID-mapped mounts (e.g., run a quick
@@ -216,7 +219,7 @@ func kernelSupportsUidShifting() (sh.IDShiftType, bool) {
 	// 	return sh.Shiftfs, true
 	// }
 
-	return sh.NoShift, false
+	return sh.IDMappedMount, false
 }
 
 // checkUidShifting returns the type of UID shifting needed (if any) for the
@@ -232,10 +235,11 @@ func CheckUidShifting(sysMgr *Mgr, spec *specs.Spec) (sh.IDShiftType, sh.IDShift
 		return sh.NoShift, sh.NoShift, fmt.Errorf("failed to check uid shifting requirement on rootfs: %s", err)
 	}
 
-	// For the rootfs, we always ID shift; if the kernel can do it, great we use
-	// that. But if it can't do it, we chown the rootfs. Chowning is fairly safe
-	// since the container's rootfs is dedicated to the container (no other
-	// entity in the system will use it while the container is running).
+	// For UID shifting is needed on the rootfs, we do it via the kernel's ID
+	// shift mechanism (e.g., shiftfs, when available) or by chown'ing the rootfs
+	// hierarchy. Chowning is fairly safe since the container's rootfs is
+	// dedicated to the container (no other entity in the system will use it
+	// while the container is running).
 	rootfsShiftType := sh.NoShift
 
 	if needShiftOnRootfs {
@@ -246,11 +250,10 @@ func CheckUidShifting(sysMgr *Mgr, spec *specs.Spec) (sh.IDShiftType, sh.IDShift
 		}
 	}
 
-	// For bind mounts into the container, we rely on the kernel ID shift (i.e.,
-	// we never chown). Chowning for bind mounts is not a good idea since we
-	// don't know what's being bind mounted (e.g., the bind mount could be a
-	// user's home dir, a critical system file, etc.). Also, Sysbox config option
-	// BindMountUidShift disables ID shifting on bind-mounts.
+	// For bind mounts into the container, we rely on the kernel ID shift
+	// mechanism (i.e., we never chown). Chowning for bind mounts is not a good
+	// idea since we don't know what's being bind mounted (e.g., the bind mount
+	// could be a user's home dir, a critical system file, etc.).
 	bindMountShiftType := sh.NoShift
 
 	if sysMgr.Config.BindMountUidShift {
