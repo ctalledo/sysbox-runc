@@ -32,6 +32,7 @@ import (
 	"github.com/opencontainers/runc/libcontainer/utils"
 	"github.com/opencontainers/runc/libsysbox/shiftfs"
 	"github.com/opencontainers/runc/libsysbox/sysbox"
+	"github.com/opencontainers/runc/libsysbox/syscont"
 	"github.com/opencontainers/runtime-spec/specs-go"
 
 	"github.com/checkpoint-restore/go-criu/v4"
@@ -2725,6 +2726,7 @@ func (c *linuxContainer) setupIDMappedMounts() error {
 
 	for _, m := range config.Mounts {
 		if m.Device == "bind" {
+
 			if skipIDMapMountBindSource(m.Source) {
 				continue
 			}
@@ -2742,7 +2744,7 @@ func (c *linuxContainer) setupIDMappedMounts() error {
 }
 
 // The following are host directories where we never ID-map-mount as it causes
-// functional problems.
+// functional problems (i.e., the kernel does not allow ID-maps over them).
 var idMapMountBlackList = []string{"/dev/null"}
 
 // sysbox-runc: skipIDMapMountBindSource indicates if ID-mapped mounting should
@@ -2754,4 +2756,45 @@ func skipIDMapMountBindSource(source string) bool {
 		}
 	}
 	return false
+}
+
+// needUidShiftOnBindSrc checks if uid/gid shifting on the given bind mount source path is
+// required to run the system container.
+func needUidShiftOnBindSrc(mount *configs.Mount, config *configs.Config) (bool, error) {
+
+	// sysbox-fs handles uid(gid) shifting itself, so no need for mounting shiftfs on top
+	if strings.HasPrefix(mount.Source, syscont.SysboxFsDir+"/") {
+		return false, nil
+	}
+
+	// Don't mount shiftfs on bind sources under the container's rootfs
+	if strings.HasPrefix(mount.Source, config.Rootfs+"/") {
+		return false, nil
+	}
+
+	// If the bind source has uid:gid ownership matching the container's user-ns
+	// mappings, shiftfs is not needed.
+
+	var hostUid, hostGid uint32
+	var uidSize, gidSize uint32
+
+	for _, mapping := range config.UidMappings {
+		if mapping.ContainerID == 0 {
+			hostUid = uint32(mapping.HostID)
+		}
+		uidSize += uint32(mapping.Size)
+	}
+	for _, mapping := range config.GidMappings {
+		if mapping.ContainerID == 0 {
+			hostGid = uint32(mapping.HostID)
+		}
+		gidSize += uint32(mapping.Size)
+	}
+
+	if (mount.BindSrcInfo.Uid >= hostUid) && (mount.BindSrcInfo.Uid < hostUid+uidSize) &&
+		(mount.BindSrcInfo.Gid >= hostGid) && (mount.BindSrcInfo.Gid < hostGid+gidSize) {
+		return false, nil
+	}
+
+	return true, nil
 }
