@@ -20,7 +20,6 @@ import (
 	"time"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
-	sh "github.com/nestybox/sysbox-libs/idShiftUtils"
 	"github.com/nestybox/sysbox-runc/libcontainer/mount"
 
 	"github.com/moby/sys/mountinfo"
@@ -659,31 +658,10 @@ func createDevices(config *configs.Config, pipe io.ReadWriter) error {
 			continue
 		}
 
-		// We will create the device node by bind-mounting the device
-		// from the host. Here we prepare the mount destination inside
-		// the rootfs.
-		dest := filepath.Join(".", node.Path)
-		if err := mkdirall(filepath.Dir(dest), 0755, config, pipe); err != nil {
-			return err
-		}
-
-		f, err := os.Create(dest)
-		if err != nil && !os.IsExist(err) {
-			return err
-		}
-		if f != nil {
-			f.Close()
-		}
-
-		// TODO: set the idMappedMount property when appropriate
 		req := opReq{
 			Op:      mknod,
 			DevNode: *node,
 			Rootfs:  config.Rootfs,
-		}
-
-		if config.BindMntUidShiftType == sh.IDMappedMount {
-			req.IDMappedMount = true
 		}
 
 		mknodReqs = append(mknodReqs, req)

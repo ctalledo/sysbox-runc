@@ -352,69 +352,32 @@ func (l *linuxRootfsInit) Init() error {
 
 	case mknod:
 		// NOTE: mknod won't work because we can't write on a tmpfs mount since we
-		// are not in the conatiner's user-ns, and the tmpfs mount has a uid/gid
+		// are not in the container's user-ns, and the tmpfs mount has a uid/gid
 		// that matches the container's init process user-ns. Writing returns
 		// an error such as "value too large for defined data type"
 
 		rootfs := l.reqs[0].Rootfs
-		initPid := l.reqs[0].InitPid
-
 		oldMask := unix.Umask(0000)
+
 		for _, req := range l.reqs {
 			node := &req.DevNode
-
 			dest, err := securejoin.SecureJoin(rootfs, node.Path)
 			if err != nil {
 				unix.Umask(oldMask)
 				return newSystemErrorWithCausef(err, "secure join of %s and %s failed", rootfs, node.Path)
 			}
 
-			m := &configs.Mount{
-				Source:      node.Path,
-				Destination: dest,
-			}
+			// XXX: DEBUG
+			time.Sleep(1 * time.Hour)
 
-			if err := doBindMount(m); err != nil {
-				unix.Umask(oldMask)
-				return newSystemErrorWithCausef(err, "bind mounting %s to %s", m.Source, m.Destination)
-			}
-
-			// Set up the ID-mapping as needed
-			if req.IDMappedMount {
-
-				// TODO: ensure procfs is always mounted (libsysbox/syscont/spec.go
-				// should check this)
-
-				// TODO: use safe filepath join? (to avoid symlink exchange)
-
-				usernsPath := fmt.Sprintf("/proc/%d/ns/user", initPid)
-				target := m.Destination
-
-				if err := sh.IDMapMount(usernsPath, target); err != nil {
-					return newSystemErrorWithCausef(err, "setting up ID-mapped mount on userns %s, path %s", usernsPath, target)
+			if err := mknodDevice(dest, node); err != nil {
+				if os.IsExist(err) {
+					continue
+				} else {
+					unix.Umask(oldMask)
+					return newSystemErrorWithCausef(err, "failed to mknod on %s", dest)
 				}
 			}
-
-			// if err := bindMountDeviceNode(dest, node); err != nil {
-			// 	unix.Umask(oldMask)
-			// 	return newSystemErrorWithCausef(err, "failed to create device node on %s", dest)
-			// }
-
-			// TODO: apply id-map mount if needed
-
-			// if err := mknodDevice(dest, node); err != nil {
-			// 	if os.IsExist(err) {
-			// 		continue
-			// 	} else {
-			// 		unix.Umask(oldMask)
-			// 		return newSystemErrorWithCausef(err, "failed to mknod on %s", dest)
-			// 		// // If mknod fails, try bind mounting a device node
-			// 		// if err2 := bindMountDeviceNode(dest, node); err2 != nil {
-			// 		// 	unix.Umask(oldMask)
-			// 		// 	return newSystemErrorWithCausef(err2, "failed to bind mount %s to %s", node.Path, dest)
-			// 		// }
-			// 	}
-			// }
 		}
 		unix.Umask(oldMask)
 
