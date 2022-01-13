@@ -2372,7 +2372,7 @@ func (c *linuxContainer) handleReqOp(childPid int, reqs []opReq) error {
 	// of the same type.
 	op := reqs[0].Op
 
-	if op != bind && op != switchDockerDns && op != chown && op != mkdir {
+	if op != bind && op != switchDockerDns && op != chown && op != mkdir && op != mknod {
 		return newSystemError(fmt.Errorf("invalid opReq type %d", int(op)))
 	}
 
@@ -2421,7 +2421,7 @@ func (c *linuxContainer) handleOp(op opReqType, childPid int, reqs []opReq) erro
 	namespaces := []string{}
 
 	switch op {
-	case bind, chown, mkdir:
+	case bind, chown, mkdir, mknod:
 		namespaces = append(namespaces,
 			fmt.Sprintf("mnt:/proc/%d/ns/mnt", childPid),
 			fmt.Sprintf("pid:/proc/%d/ns/pid", childPid),

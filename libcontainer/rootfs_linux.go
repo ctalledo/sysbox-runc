@@ -20,6 +20,7 @@ import (
 	"time"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
+	sh "github.com/nestybox/sysbox-libs/idShiftUtils"
 	"github.com/nestybox/sysbox-runc/libcontainer/mount"
 
 	"github.com/moby/sys/mountinfo"
@@ -28,7 +29,6 @@ import (
 	"github.com/opencontainers/runc/libcontainer/cgroups"
 	"github.com/opencontainers/runc/libcontainer/configs"
 	"github.com/opencontainers/runc/libcontainer/devices"
-	"github.com/opencontainers/runc/libcontainer/system"
 	"github.com/opencontainers/runc/libcontainer/utils"
 	libcontainerUtils "github.com/opencontainers/runc/libcontainer/utils"
 
@@ -648,24 +648,75 @@ func reOpenDevNull() error {
 
 // Create the device nodes in the container.
 func createDevices(config *configs.Config, pipe io.ReadWriter) error {
-	useBindMount := system.RunningInUserNS() || config.Namespaces.Contains(configs.NEWUSER)
-	oldMask := unix.Umask(0000)
+
+	mknodReqs := []opReq{}
+
 	for _, node := range config.Devices {
 
-		// The /dev/ptmx device is setup by setupPtmx()
-		if utils.CleanPath(node.Path) == "/dev/ptmx" {
+		// The /dev/ptmx device is setup by setupPtmx(), and empty node paths are
+		// ignored here (exist for cgroup reasons).
+		if utils.CleanPath(node.Path) == "/dev/ptmx" || node.Path == "" {
 			continue
 		}
 
-		// containers running in a user namespace are not allowed to mknod
-		// devices so we can just bind mount it from the host.
-		if err := createDeviceNode(node, useBindMount, config, pipe); err != nil {
-			unix.Umask(oldMask)
+		// We will create the device node by bind-mounting the device
+		// from the host. Here we prepare the mount destination inside
+		// the rootfs.
+		dest := filepath.Join(".", node.Path)
+		if err := mkdirall(filepath.Dir(dest), 0755, config, pipe); err != nil {
 			return err
 		}
+
+		f, err := os.Create(dest)
+		if err != nil && !os.IsExist(err) {
+			return err
+		}
+		if f != nil {
+			f.Close()
+		}
+
+		// TODO: set the idMappedMount property when appropriate
+		req := opReq{
+			Op:      mknod,
+			DevNode: *node,
+			Rootfs:  config.Rootfs,
+		}
+
+		if config.BindMntUidShiftType == sh.IDMappedMount {
+			req.IDMappedMount = true
+		}
+
+		mknodReqs = append(mknodReqs, req)
 	}
-	unix.Umask(oldMask)
+
+	// Now request our parent sysbox-runc to perform the bind mount for us.
+	if len(mknodReqs) > 0 {
+		if err := syncParentDoOp(mknodReqs, pipe); err != nil {
+			return newSystemErrorWithCause(err, "syncing with parent runc to perform mknod")
+		}
+	}
+
 	return nil
+
+	// TODO: MOVE THIS TO ROOTFS_INIT_LINUX
+
+	// oldMask := unix.Umask(0000)
+	// for _, node := range config.Devices {
+
+	// 	// The /dev/ptmx device is setup by setupPtmx()
+	// 	if utils.CleanPath(node.Path) == "/dev/ptmx" {
+	// 		continue
+	// 	}
+
+	// 	// containers running in a user namespace are not allowed to mknod
+	// 	// devices so we can just bind mount it from the host.
+	// 	if err := createDeviceNode(node, useBindMount, config, pipe); err != nil {
+	// 		unix.Umask(oldMask)
+	// 		return err
+	// 	}
+	// }
+	// unix.Umask(oldMask)
+	// return nil
 }
 
 func bindMountDeviceNode(dest string, node *devices.Device) error {
@@ -684,30 +735,31 @@ func bindMountDeviceNode(dest string, node *devices.Device) error {
 	return nil
 }
 
+// TODO: remove this code
 // Creates the device node in the rootfs of the container.
-func createDeviceNode(node *devices.Device, bind bool, config *configs.Config, pipe io.ReadWriter) error {
-	if node.Path == "" {
-		// The node only exists for cgroup reasons, ignore it here.
-		return nil
-	}
-	dest := filepath.Join(".", node.Path)
+// func createDeviceNode(node *devices.Device, bind bool, config *configs.Config, pipe io.ReadWriter) error {
+// 	if node.Path == "" {
+// 		// The node only exists for cgroup reasons, ignore it here.
+// 		return nil
+// 	}
+// 	dest := filepath.Join(".", node.Path)
 
-	if err := mkdirall(filepath.Dir(dest), 0755, config, pipe); err != nil {
-		return err
-	}
-	if bind {
-		return bindMountDeviceNode(dest, node)
-	}
-	if err := mknodDevice(dest, node); err != nil {
-		if os.IsExist(err) {
-			return nil
-		} else if os.IsPermission(err) {
-			return bindMountDeviceNode(dest, node)
-		}
-		return err
-	}
-	return nil
-}
+// 	if err := mkdirall(filepath.Dir(dest), 0755, config, pipe); err != nil {
+// 		return err
+// 	}
+// 	if bind {
+// 		return bindMountDeviceNode(dest, node)
+// 	}
+// 	if err := mknodDevice(dest, node); err != nil {
+// 		if os.IsExist(err) {
+// 			return nil
+// 		} else if os.IsPermission(err) {
+// 			return bindMountDeviceNode(dest, node)
+// 		}
+// 		return err
+// 	}
+// 	return nil
+// }
 
 func mknodDevice(dest string, node *devices.Device) error {
 	fileMode := node.FileMode

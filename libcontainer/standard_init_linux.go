@@ -11,6 +11,7 @@ import (
 	"github.com/nestybox/sysbox-runc/libcontainer/mount"
 	"github.com/opencontainers/runc/libcontainer/apparmor"
 	"github.com/opencontainers/runc/libcontainer/configs"
+	"github.com/opencontainers/runc/libcontainer/devices"
 	"github.com/opencontainers/runc/libcontainer/keys"
 	"github.com/opencontainers/runc/libcontainer/seccomp"
 	"github.com/opencontainers/runc/libcontainer/system"
@@ -38,6 +39,7 @@ const (
 	switchDockerDns
 	chown
 	mkdir
+	mknod
 )
 
 type opReq struct {
@@ -58,6 +60,10 @@ type opReq struct {
 	Uid  int         `json:"uid"`
 	Gid  int         `json:"gid"`
 	Mode os.FileMode `json:"mode"`
+
+	// mknod
+	DevNode       devices.Device `json:"dev_node"`
+	IDMappedMount bool           `json:"idmap"`
 }
 
 func (l *linuxStandardInit) getSessionRingParams() (string, uint32, uint32) {
